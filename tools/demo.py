@@ -13,6 +13,8 @@ Demo script showing detections in sample images.
 See README.md for installation instructions before running.
 """
 
+import matplotlib
+matplotlib.use('pdf')
 import _init_paths
 from fast_rcnn.config import cfg
 from fast_rcnn.test import im_detect
@@ -23,6 +25,7 @@ import numpy as np
 import scipy.io as sio
 import caffe, os, sys, cv2
 import argparse
+
 
 CLASSES = ('__background__',
            'aeroplane', 'bicycle', 'bird', 'boat',
