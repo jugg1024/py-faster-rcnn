@@ -26,6 +26,10 @@ import scipy.io as sio
 import caffe, os, sys, cv2
 import argparse
 import re
+import lxml.html as lh
+import requests
+import json
+import time
 
 from os import listdir
 from os.path import isfile, join
@@ -39,12 +43,11 @@ def vis_detections(ax, class_name, dets, thresh=0.5):
   """Draw detected bounding boxes."""
   inds = np.where(dets[:, -1] >= thresh)[0]
   if len(inds) == 0:
-    return
+    return False
 
   for i in inds:
     bbox = dets[i, :4]
     score = dets[i, -1]
-
     ax.add_patch(
       plt.Rectangle((bbox[0], bbox[1]),
               bbox[2] - bbox[0],
@@ -55,22 +58,15 @@ def vis_detections(ax, class_name, dets, thresh=0.5):
         '{:s} {:.3f}'.format(class_name, score),
         bbox=dict(facecolor='blue', alpha=0.5),
         fontsize=14, color='white')
-
   ax.set_title(('{} detections with '
           'p({} | box) >= {:.1f}').format(class_name, class_name,
                           thresh), fontsize=14)
   plt.axis('off')
   plt.tight_layout()
   plt.draw()
+  return True
 
-
-def demo(net, image_name):
-  """Detect object classes in an image using pre-computed object proposals."""
-
-  # Load the demo image
-  im_file = os.path.join(cfg.DATA_DIR, 'demo', image_name)
-  im = cv2.imread(im_file)
-
+def im_det(net, im, imname):
   # Detect all object classes and regress object bounds
   timer = Timer()
   timer.tic()
@@ -84,7 +80,8 @@ def demo(net, image_name):
   NMS_THRESH = 0.3
   im = im[:, :, (2, 1, 0)]
   fig, ax = plt.subplots(figsize=(12, 12))
-  ax.imshow(im, aspect='equal')
+  ax. imshow(im, aspect='equal')
+  detected = False
   for cls_ind, cls in enumerate(CLASSES[1:]):
     cls_ind += 1 # because we skipped background
     cls_boxes = boxes[:, 4*cls_ind:4*(cls_ind + 1)]
@@ -93,10 +90,14 @@ def demo(net, image_name):
               cls_scores[:, np.newaxis])).astype(np.float32)
     keep = nms(dets, NMS_THRESH)
     dets = dets[keep, :]
-    vis_detections(ax, cls, dets, thresh=CONF_THRESH)
-  output_dir = os.path.join(cfg.ROOT_DIR, 'output_img',
-    image_name.split('/')[-1] + "_detect_rst.jpg")
-  plt.savefig(output_dir)
+    detected = vis_detections(ax, cls, dets, thresh=CONF_THRESH)
+  if detected:
+    detect_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img',
+    str(imname) + "_detect_rst.jpg")
+    plt.savefig(detect_output_dir)
+    ori_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img',
+    str(imname) + ".jpg")
+    cv2.imwrite(ori_output_dir, im)
 
 def parse_args():
   """Parse input arguments."""
@@ -111,19 +112,14 @@ def parse_args():
   parser.add_argument('--model', dest='trained_model',
             help='weights')
   default_dir = os.path.join(cfg.ROOT_DIR, '..', 'datasets', 'visual-test')
-  parser.add_argument('--dataset', dest='dataset_dir',
+  parser.add_argument('--video_url', dest='dataset_dir',
             help='dataset_dir',
             default=default_dir)
-
   args = parser.parse_args()
-
   return args
 
-if __name__ == '__main__':
+def caffe_init(args):
   cfg.TEST.HAS_RPN = True  # Use RPN for proposals
-
-  args = parse_args()
-
   prototxt = os.path.join(cfg.ROOT_DIR, 'models', 'coco_text',
             NETS[args.demo_net][0], 'faster_rcnn_end2end', 'test.prototxt')
   if args.trained_model:
@@ -144,19 +140,59 @@ if __name__ == '__main__':
     caffe.set_device(args.gpu_id)
     cfg.GPU_ID = args.gpu_id
   net = caffe.Net(prototxt, caffemodel, caffe.TEST)
-
   print '\n\nLoaded network {:s}'.format(caffemodel)
-
   # Warmup on a dummy image
   im = 128 * np.ones((300, 500, 3), dtype=np.uint8)
   for i in xrange(2):
     _, _= im_detect(net, im)
+  return net
 
-  mypath = os.path.join(cfg.ROOT_DIR, '..', args.dataset_dir)
-  im_names = [join(mypath, f) for f in listdir(mypath) if re.match(r'.*\.jpg', f)]
-  if not os.path.exists(os.path.join(cfg.ROOT_DIR, 'output_img')):
-    os.mkdir(os.path.join(cfg.ROOT_DIR, 'output_img'))
-  for im_name in im_names:
-    print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
-    print 'Demo for data/demo/{}'.format(im_name)
-    demo(net, im_name)
+def url_convert(url):
+  r = requests.get(url)
+  doc = lh.fromstring(r.content)
+  gid = doc.xpath('//@tt-videoid')
+  json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(gid[0]) + '?nobase64=true'
+  r = requests.get(json_url)
+  dic = json.loads(r.content)
+  if "data" in dic:
+    if "video_list" in dic["data"]:
+      if "video_1" in dic["data"]["video_list"]:
+        if "main_url" in dic["data"]["video_list"]["video_1"]:
+          return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid[0]
+  return 'bad url', gid[0]
+
+if __name__ == '__main__':
+  args = parse_args()
+  net = caffe_init(args)
+  # url = args.video_url
+  url = 'http://toutiao.com/a6308112164441161986/'
+  real_url, gid = url_convert(url)
+  print real_url
+  os.system('curl -o test.mp4 ' + real_url)
+  capture = cv2.VideoCapture('./test.mp4')
+  size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
+          int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
+  fps = capture.get(cv2.cv.CV_CAP_PROP_FPS)
+  print fps
+  cnt = 0
+  time_start = time.time()
+  timer = Timer()
+  timer.tic()
+  while True:
+    ret, img = capture.read()
+    if (type(img) == type(None)):
+      break
+    if (0xFF & cv2.waitKey(5) == 27) or img.size == 0:
+      break
+    if cnt % fps == 0:
+      print str(cnt / fps) + ', seconds'
+      img = cv2.resize(img, (img.shape[1]/2, img.shape[0]/2))
+      seconds = cnt / fps;
+      imname = str(gid) + '_' + str(seconds) + 's'
+      im_det(net, img, imname)
+    cnt += 1
+  timer.toc()
+  print ('Detection took {:.3f}s for '
+       'video {}').format(timer.total_time, real_url)
+  capture.release()
+  cv2.destroyAllWindows()
