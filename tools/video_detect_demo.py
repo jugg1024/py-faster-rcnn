@@ -62,11 +62,10 @@ def vis_detections(ax, class_name, dets, thresh=0.5):
           'p({} | box) >= {:.1f}').format(class_name, class_name,
                           thresh), fontsize=14)
   plt.axis('off')
-  plt.tight_layout()
   plt.draw()
   return True
 
-def im_det(net, im, imname):
+def im_det(net, im, gid, imname):
   # Detect all object classes and regress object bounds
   timer = Timer()
   timer.tic()
@@ -79,7 +78,8 @@ def im_det(net, im, imname):
   CONF_THRESH = 0.8
   NMS_THRESH = 0.3
   im = im[:, :, (2, 1, 0)]
-  fig, ax = plt.subplots(figsize=(12, 12))
+  plt.close()
+  fig, ax = plt.subplots(figsize=(6, 6))
   ax. imshow(im, aspect='equal')
   detected = False
   for cls_ind, cls in enumerate(CLASSES[1:]):
@@ -92,12 +92,14 @@ def im_det(net, im, imname):
     dets = dets[keep, :]
     detected = vis_detections(ax, cls, dets, thresh=CONF_THRESH)
   if detected:
-    detect_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img',
+    detect_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img', gid,
     str(imname) + "_detect_rst.jpg")
     plt.savefig(detect_output_dir)
-    ori_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img',
+    ori_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img', gid,
     str(imname) + ".jpg")
+    im = cv2.resize(im, (600, int(float(im.shape[0])/ float(im.shape[1]) * 600)))
     cv2.imwrite(ori_output_dir, im)
+  return detected
 
 def parse_args():
   """Parse input arguments."""
@@ -111,10 +113,12 @@ def parse_args():
             choices=NETS.keys(), default='vgg16')
   parser.add_argument('--model', dest='trained_model',
             help='weights')
-  default_dir = os.path.join(cfg.ROOT_DIR, '..', 'datasets', 'visual-test')
-  parser.add_argument('--video_url', dest='dataset_dir',
-            help='dataset_dir',
-            default=default_dir)
+  parser.add_argument('--video_url', dest='video_url',
+            help='video_url',
+            default='http://toutiao.com/a6308112164441161986/')
+  parser.add_argument('--input_file', dest='input_file',
+            help='input_file',
+            default='test.txt')
   args = parser.parse_args()
   return args
 
@@ -163,36 +167,49 @@ def url_convert(url):
 
 if __name__ == '__main__':
   args = parse_args()
-  net = caffe_init(args)
-  # url = args.video_url
-  url = 'http://toutiao.com/a6308112164441161986/'
-  real_url, gid = url_convert(url)
-  print real_url
-  os.system('curl -o test.mp4 ' + real_url)
-  capture = cv2.VideoCapture('./test.mp4')
-  size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
-          int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
-  fps = capture.get(cv2.cv.CV_CAP_PROP_FPS)
-  print fps
-  cnt = 0
-  time_start = time.time()
-  timer = Timer()
-  timer.tic()
-  while True:
-    ret, img = capture.read()
-    if (type(img) == type(None)):
-      break
-    if (0xFF & cv2.waitKey(5) == 27) or img.size == 0:
-      break
-    if cnt % fps == 0:
-      print str(cnt / fps) + ', seconds'
-      img = cv2.resize(img, (img.shape[1]/2, img.shape[0]/2))
-      seconds = cnt / fps;
-      imname = str(gid) + '_' + str(seconds) + 's'
-      im_det(net, img, imname)
-    cnt += 1
-  timer.toc()
-  print ('Detection took {:.3f}s for '
-       'video {}').format(timer.total_time, real_url)
-  capture.release()
-  cv2.destroyAllWindows()
+  with open(args.input_file,'r') as fin:
+    net = caffe_init(args)
+    if not os.path.isdir(os.path.join(cfg.ROOT_DIR, 'output_img')):
+      os.makedirs(os.path.join(cfg.ROOT_DIR, 'output_img'))
+    for line in fin:
+      # url = args.video_url
+      # url = 'http://toutiao.com/a6308112164441161986/'
+      url = line
+      real_url, gid = url_convert(url)
+      if not os.path.isdir(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid))):
+        os.makedirs(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid)))
+      # real_url = 'http://v4.pstatp.com/05d78d587f339653490ecc1db093f263/579f467f/video/c/d1f79d1f5eaa4aab8b18d739b0b9277b/'
+      print real_url
+      os.system('curl -o test.mp4 ' + real_url)
+      capture = cv2.VideoCapture('./test.mp4')
+      size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
+              int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
+      fps = int(capture.get(cv2.cv.CV_CAP_PROP_FPS) + 0.5)
+      print fps
+      cnt = 0
+      time_start = time.time()
+      timer = Timer()
+      timer.tic()
+      det_cnt = 0
+      while True:
+        ret, img = capture.read()
+        if (type(img) == type(None)):
+          break
+        if (0xFF & cv2.waitKey(5) == 27) or img.size == 0:
+          break
+        if det_cnt >= 300:
+          break
+        if cnt % (2 * fps) == 0:
+          print str(cnt / fps) + ', seconds'
+          img = cv2.resize(img, (img.shape[1]/2, img.shape[0]/2))
+          seconds = cnt / fps;
+          imname = str(gid) + '_' + str(seconds) + 's'
+          detected = im_det(net, img, str(gid), imname)
+          if detected:
+            det_cnt += 1
+        cnt += 1
+      timer.toc()
+      print ('Detection took {:.3f}s for '
+           'video {}').format(timer.total_time, real_url)
+      capture.release()
+      cv2.destroyAllWindows()
