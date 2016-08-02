@@ -39,6 +39,12 @@ CLASSES = ('__background__', 'text')
 NETS = {'vgg16': ('VGG16', 'vgg16_faster_rcnn_coco_text.caffemodel'),
         'zf': ('ZF', 'ZF_faster_rcnn_final.caffemodel')}
 
+rule = "object_id=(?P<gid>\d*)"
+regex = re.compile(rule, re.IGNORECASE)
+rule2 = "\"vu\":\"(?P<vu>.*)\""
+regex2 = re.compile(rule2, re.IGNORECASE)
+headers = {'cookie':'uuid="w:eb79df233cdd4f51b38a41ed86be3269"; sessionid=cwgp3w1x1afoyw5z6frynhw4jizhif4a; _ga=GA1.2.1180891650.1460356141; _gat=1; csrftoken=3811080abac6a3efacf65dc6cd2962ef'}
+
 def vis_detections(ax, class_name, dets, thresh=0.5):
   """Draw detected bounding boxes."""
   inds = np.where(dets[:, -1] >= thresh)[0]
@@ -75,7 +81,7 @@ def im_det(net, im, gid, imname):
        '{:d} object proposals').format(timer.total_time, boxes.shape[0])
 
   # Visualize detections for each class
-  CONF_THRESH = 0.8
+  CONF_THRESH = 0.7
   NMS_THRESH = 0.3
   im = im[:, :, (2, 1, 0)]
   plt.close()
@@ -98,6 +104,7 @@ def im_det(net, im, gid, imname):
     ori_output_dir = os.path.join(cfg.ROOT_DIR, 'output_img', gid,
     str(imname) + ".jpg")
     im = cv2.resize(im, (600, int(float(im.shape[0])/ float(im.shape[1]) * 600)))
+    im = im[:, :, (2, 1, 0)]
     cv2.imwrite(ori_output_dir, im)
   return detected
 
@@ -119,6 +126,9 @@ def parse_args():
   parser.add_argument('--input_file', dest='input_file',
             help='input_file',
             default='test.txt')
+  parser.add_argument('--url_type', dest='url_type',
+            help='url_type',
+            default='crawlarticleitem')
   args = parser.parse_args()
   return args
 
@@ -155,15 +165,45 @@ def url_convert(url):
   r = requests.get(url)
   doc = lh.fromstring(r.content)
   gid = doc.xpath('//@tt-videoid')
-  json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(gid[0]) + '?nobase64=true'
-  r = requests.get(json_url)
-  dic = json.loads(r.content)
-  if "data" in dic:
-    if "video_list" in dic["data"]:
-      if "video_1" in dic["data"]["video_list"]:
-        if "main_url" in dic["data"]["video_list"]["video_1"]:
-          return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid[0]
-  return 'bad url', gid[0]
+  if len(gid) > 0:
+    json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(gid[0]) + '?nobase64=true'
+    r = requests.get(json_url)
+    dic = json.loads(r.content)
+    if "data" in dic:
+      if "video_list" in dic["data"]:
+        if "video_1" in dic["data"]["video_list"]:
+          if "main_url" in dic["data"]["video_list"]["video_1"]:
+            return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid[0]
+    return 'bad url', gid[0]
+  return 'bad url', 'bad gid'
+
+def url_to_origin_url2(url):
+  global rule, rule2, regex, regex2, headers
+  match = regex.search(url)
+  if match:
+    gid = match.group('gid')
+    url = 'http://admin.bytedance.com/crawl/article/crawlarticleitem/?id=' + str(gid)
+    print url
+    r = requests.get(url, headers=headers)
+    doc = lh.fromstring(r.content)
+    json_doc = doc.xpath("//div[@class='content']/div/div/p[1]/text()")
+    if not json_doc:
+      return 'bad url', 'bad gid'
+    json_doc = json_doc[0]
+    match_vu = regex2.search(json_doc)
+    if not match_vu:
+      return 'bad url', 'bad gid'
+    vu = match_vu.group('vu')
+    json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(vu) + '?nobase64=true'
+    r = requests.get(json_url)
+    dic = json.loads(r.content)
+    if "data" in dic:
+      if "video_list" in dic["data"]:
+        if "video_1" in dic["data"]["video_list"]:
+          if "main_url" in dic["data"]["video_list"]["video_1"]:
+            return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid
+    return 'bad url', gid
+  return 'bad url', 'bad gid'
 
 if __name__ == '__main__':
   args = parse_args()
@@ -171,45 +211,58 @@ if __name__ == '__main__':
     net = caffe_init(args)
     if not os.path.isdir(os.path.join(cfg.ROOT_DIR, 'output_img')):
       os.makedirs(os.path.join(cfg.ROOT_DIR, 'output_img'))
+    line_cnt = 0
     for line in fin:
+      line_cnt += 1
       # url = args.video_url
       # url = 'http://toutiao.com/a6308112164441161986/'
-      url = line
-      real_url, gid = url_convert(url)
-      if not os.path.isdir(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid))):
-        os.makedirs(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid)))
-      # real_url = 'http://v4.pstatp.com/05d78d587f339653490ecc1db093f263/579f467f/video/c/d1f79d1f5eaa4aab8b18d739b0b9277b/'
-      print real_url
-      os.system('curl -o test.mp4 ' + real_url)
-      capture = cv2.VideoCapture('./test.mp4')
-      size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
-              int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
-      fps = int(capture.get(cv2.cv.CV_CAP_PROP_FPS) + 0.5)
-      print fps
-      cnt = 0
-      time_start = time.time()
-      timer = Timer()
-      timer.tic()
-      det_cnt = 0
-      while True:
-        ret, img = capture.read()
-        if (type(img) == type(None)):
+      if line_cnt >= 0:
+        print line
+        url = line
+        # print args.url_type
+        if args.url_type == 'addvertise':
+          real_url, gid = url_to_origin_url2(url)
+        elif args.url_type == 'unrelated':
+          real_url, gid = url_convert(url)
+        else:
+          print 'url_type error'
           break
-        if (0xFF & cv2.waitKey(5) == 27) or img.size == 0:
-          break
-        if det_cnt >= 300:
-          break
-        if cnt % (2 * fps) == 0:
-          print str(cnt / fps) + ', seconds'
-          img = cv2.resize(img, (img.shape[1]/2, img.shape[0]/2))
-          seconds = cnt / fps;
-          imname = str(gid) + '_' + str(seconds) + 's'
-          detected = im_det(net, img, str(gid), imname)
-          if detected:
-            det_cnt += 1
-        cnt += 1
-      timer.toc()
-      print ('Detection took {:.3f}s for '
-           'video {}').format(timer.total_time, real_url)
-      capture.release()
-      cv2.destroyAllWindows()
+        if gid == 'bad gid':
+          continue
+        if not os.path.isdir(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid))):
+          os.makedirs(os.path.join(cfg.ROOT_DIR, 'output_img', str(gid)))
+        # real_url = 'http://v4.pstatp.com/05d78d587f339653490ecc1db093f263/579f467f/video/c/d1f79d1f5eaa4aab8b18d739b0b9277b/'
+        print real_url
+        os.system('curl -o ' + args.input_file + '.mp4 ' + real_url)
+        capture = cv2.VideoCapture('./' + args.input_file + '.mp4')
+        size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
+                int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
+        fps = int(capture.get(cv2.cv.CV_CAP_PROP_FPS) + 0.5)
+        print fps
+        cnt = 0
+        time_start = time.time()
+        timer = Timer()
+        timer.tic()
+        det_cnt = 0
+        while True:
+          ret, img = capture.read()
+          if (type(img) == type(None)):
+            break
+          if (0xFF & cv2.waitKey(5) == 27) or img.size == 0:
+            break
+          if det_cnt >= 300:
+            break
+          if cnt % (2 * fps) == 0:
+            print str(cnt / fps) + ', seconds'
+            img = cv2.resize(img, (img.shape[1]/2, img.shape[0]/2))
+            seconds = cnt / fps;
+            imname = str(gid) + '_' + str(seconds) + 's'
+            detected = im_det(net, img, str(gid), imname)
+            if detected:
+              det_cnt += 1
+          cnt += 1
+        timer.toc()
+        print ('Detection took {:.3f}s for '
+             'video {}').format(timer.total_time, real_url)
+        capture.release()
+        cv2.destroyAllWindows()
