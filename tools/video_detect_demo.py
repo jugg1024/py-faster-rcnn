@@ -39,7 +39,7 @@ CLASSES = ('__background__', 'text')
 NETS = {'vgg16': ('VGG16', 'vgg16_faster_rcnn_coco_text.caffemodel'),
         'zf': ('ZF', 'ZF_faster_rcnn_final.caffemodel')}
 
-rule = "http:\/\/admin.bytedance.com\/crawl\/editor_task\/verify_task\/\d*\/\?type=.*\&object_type=\d&object_id=(?P<gid>\d*)"
+rule = "object_id=(?P<gid>\d*)"
 regex = re.compile(rule, re.IGNORECASE)
 rule2 = "\"vu\":\"(?P<vu>.*)\""
 regex2 = re.compile(rule2, re.IGNORECASE)
@@ -179,22 +179,31 @@ def url_convert(url):
 
 def url_to_origin_url2(url):
   global rule, rule2, regex, regex2, headers
-  gid = regex.search(url).group('gid')
-  url = 'http://admin.bytedance.com/crawl/article/crawlarticleitem/?id=' + str(gid)
-  print url
-  r = requests.get(url, headers=headers)
-  doc = lh.fromstring(r.content)
-  json_doc = doc.xpath("//div[@class='extract_result']/div[@class='content']/div/div/p[1]/text()")
-  vu = regex.search(json_doc).group('vu')
-  json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(vu) + '?nobase64=true'
-  r = requests.get(json_url)
-  dic = json.loads(r.content)
-  if "data" in dic:
-    if "video_list" in dic["data"]:
-      if "video_1" in dic["data"]["video_list"]:
-        if "main_url" in dic["data"]["video_list"]["video_1"]:
-          return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid
-  return 'bad url', gid
+  match = regex.search(url)
+  if match:
+    gid = match.group('gid')
+    url = 'http://admin.bytedance.com/crawl/article/crawlarticleitem/?id=' + str(gid)
+    print url
+    r = requests.get(url, headers=headers)
+    doc = lh.fromstring(r.content)
+    json_doc = doc.xpath("//div[@class='content']/div/div/p[1]/text()")
+    if not json_doc:
+      return 'bad url', 'bad gid'
+    json_doc = json_doc[0]
+    match_vu = regex2.search(json_doc)
+    if not match_vu:
+      return 'bad url', 'bad gid'
+    vu = match_vu.group('vu')
+    json_url = 'http://ii.snssdk.com/video/urls/1/toutiao/mp4/' + str(vu) + '?nobase64=true'
+    r = requests.get(json_url)
+    dic = json.loads(r.content)
+    if "data" in dic:
+      if "video_list" in dic["data"]:
+        if "video_1" in dic["data"]["video_list"]:
+          if "main_url" in dic["data"]["video_list"]["video_1"]:
+            return str(dic["data"]["video_list"]["video_1"]["main_url"]), gid
+    return 'bad url', gid
+  return 'bad url', 'bad gid'
 
 if __name__ == '__main__':
   args = parse_args()
@@ -210,7 +219,7 @@ if __name__ == '__main__':
       if line_cnt >= 0:
         print line
         url = line
-        print args.url_type
+        # print args.url_type
         if args.url_type == 'addvertise':
           real_url, gid = url_to_origin_url2(url)
         elif args.url_type == 'unrelated':
@@ -225,7 +234,7 @@ if __name__ == '__main__':
         # real_url = 'http://v4.pstatp.com/05d78d587f339653490ecc1db093f263/579f467f/video/c/d1f79d1f5eaa4aab8b18d739b0b9277b/'
         print real_url
         os.system('curl -o ' + args.input_file + '.mp4 ' + real_url)
-        capture = cv2.VideoCapture('./test.mp4')
+        capture = cv2.VideoCapture('./' + args.input_file + '.mp4')
         size = (int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)),
                 int(capture.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)))
         fps = int(capture.get(cv2.cv.CV_CAP_PROP_FPS) + 0.5)
