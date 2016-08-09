@@ -26,7 +26,7 @@ case $DATASET in
   pascal_voc)
     TRAIN_IMDB="voc_2007_trainval"
     TEST_IMDB="voc_2007_test"
-    PT_DIR="pascal_voc"
+    PT_DIR="coco_text"
     ITERS=70000
     ;;
   coco)

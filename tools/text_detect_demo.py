@@ -110,6 +110,8 @@ def parse_args():
             choices=NETS.keys(), default='vgg16')
   parser.add_argument('--model', dest='trained_model',
             help='weights')
+  parser.add_argument('--class_name', dest='class_name',
+            help='weights', default='text')
   default_dir = os.path.join(cfg.ROOT_DIR, '..', 'datasets', 'visual-test')
   parser.add_argument('--dataset', dest='dataset_dir',
             help='dataset_dir',
@@ -151,7 +153,7 @@ if __name__ == '__main__':
   im = 128 * np.ones((300, 500, 3), dtype=np.uint8)
   for i in xrange(2):
     _, _= im_detect(net, im)
-
+  CLASSES = ('__background__', args.class_name)
   mypath = os.path.join(cfg.ROOT_DIR, '..', args.dataset_dir)
   im_names = [join(mypath, f) for f in listdir(mypath) if re.match(r'.*\.jpg', f)]
   if not os.path.exists(os.path.join(cfg.ROOT_DIR, 'output_img')):
