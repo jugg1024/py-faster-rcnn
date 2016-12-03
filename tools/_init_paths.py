@@ -9,6 +9,7 @@
 
 import os.path as osp
 import sys
+import cv2
 
 def add_path(path):
     if path not in sys.path:
